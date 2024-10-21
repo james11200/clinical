@@ -48,7 +48,7 @@ val_labels = [convert_labels(label) for label in val_labels]
 test_labels = [convert_labels(label) for label in test_labels]
 
 # Load the LLaMA tokenizer and model for sequence classification
-HF_API_TOKEN = "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"
+HF_API_TOKEN = "your api token"
 llama_model = 'meta-llama/Meta-Llama-3-8B'
 
 # Define LoRA configuration
