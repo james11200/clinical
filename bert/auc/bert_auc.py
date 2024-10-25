@@ -26,9 +26,16 @@ def load_model(model_name):
     # )
     return tokenizer, model
 
+# def load_data(filename):
+#     with open(filename, 'r', encoding='utf-8') as file:
+#         data = [json.loads(line) for line in file.readlines()]
+#     texts = [d['Input'].replace('\n', '').replace('\r', '') for d in data]
+#     labels = [d['Output'].replace('\n', '').replace('\r', '') for d in data]
+#     return texts, labels
+
 def load_data(filename):
     with open(filename, 'r', encoding='utf-8') as file:
-        data = [json.loads(line) for line in file.readlines()]
+        data = json.load(file)  # Use json.load instead of json.loads(line)
     texts = [d['Input'].replace('\n', '').replace('\r', '') for d in data]
     labels = [d['Output'].replace('\n', '').replace('\r', '') for d in data]
     return texts, labels
@@ -57,76 +64,84 @@ def create_dataset(texts, labels):
         'labels': labels
     })
 
-# Load the test data
-test_texts, test_labels = load_data('test_dataset_perc_ver2.json')
-test_labels = [convert_labels(label) for label in test_labels]
-test_dataset = create_dataset(test_texts, test_labels)
 
 # Tokenize the test dataset
 def tokenize_function(examples):
     return tokenizer(examples['text'], padding='max_length', truncation=True, max_length=512)
 
-# Store results for both models
-results = {}
+# Load the test data
+# data='test_dataset_perc_ver2'
+# data='triage_structured_raw_data'
+# data='triage_raw_data'
+# test_texts, test_labels = load_data(f'{data}.json')
+datas=['triage_raw_data','structured_raw_data']
+for data in datas:
+    test_texts, test_labels = load_data(f'{data}.json')
+    test_labels = [convert_labels(label) for label in test_labels]
+    test_dataset = create_dataset(test_texts, test_labels)
 
-for model in models:
-    tokenizer, model_instance = load_model(model)
-    test_dataset = test_dataset.map(tokenize_function, batched=True)
+    # Store results for both models
+    results = {}
 
-    trainer = Trainer(
-        model=model_instance,
-        tokenizer=tokenizer
-    )
+    for model in models:
+        print(f'processing data {data} with model {model}')
+        tokenizer, model_instance = load_model(model)
+        test_dataset = test_dataset.map(tokenize_function, batched=True)
 
-    # Make predictions
-    predictions = trainer.predict(test_dataset)
-    logits = predictions.predictions
-    labels = predictions.label_ids
+        trainer = Trainer(
+            model=model_instance,
+            tokenizer=tokenizer
+        )
 
-    # Apply sigmoid to get probabilities
-    sigmoid_logits = torch.sigmoid(torch.tensor(logits))
-    preds = sigmoid_logits.cpu().numpy()
+        # Make predictions
+        predictions = trainer.predict(test_dataset)
+        logits = predictions.predictions
+        labels = predictions.label_ids
 
-    # Calculate AUC for each label
-    aucs = []
-    for i in range(labels.shape[1]):
-        auc = roc_auc_score(labels[:, i], preds[:, i])
-        aucs.append(auc)
+        # Apply sigmoid to get probabilities
+        sigmoid_logits = torch.sigmoid(torch.tensor(logits))
+        preds = sigmoid_logits.cpu().numpy()
 
-    results[model] = {
-        'aucs': aucs,
-        'preds': preds,
-        'labels': labels
-    }
+        # Calculate AUC for each label
+        aucs = []
+        for i in range(labels.shape[1]):
+            auc = roc_auc_score(labels[:, i], preds[:, i])
+            aucs.append(auc)
 
-    print(f"AUCs for {model}: {aucs}")
+        results[model] = {
+            'aucs': aucs,
+            'preds': preds,
+            'labels': labels
+        }
 
-# Visualize ROC curves and save images
-for i in range(len(models)):
-    model = models[i]
-    aucs = results[model]['aucs']
-    preds = results[model]['preds']
-    labels = results[model]['labels']
+        print(f"AUCs for {model}: {aucs}")
 
-    plt.figure(figsize=(10, 8))
-    mean_auc = np.mean(aucs)
+    # Visualize ROC curves and save images
+    for i in range(len(models)):
+        model = models[i]
+        aucs = results[model]['aucs']
+        preds = results[model]['preds']
+        labels = results[model]['labels']
 
-    for j in range(labels.shape[1]):
-        fpr, tpr, thresholds = roc_curve(labels[:, j], preds[:, j])
-        plt.plot(fpr, tpr, label=f'Label {j} (AUC = {aucs[j]:.2f})')
+        plt.figure(figsize=(10, 8))
+        mean_auc = np.mean(aucs)
 
-    plt.plot([0, 1], [0, 1], 'k--')  # Diagonal line
-    plt.title(f'ROC Curves for {model}')
-    plt.xlabel('False Positive Rate')
-    plt.ylabel('True Positive Rate')
-    plt.legend(loc='lower right')
-    plt.grid()
-    # plt.savefig(f'roc_curve_{model_names[i]}_avg_auc_{mean_auc:.2f}(1).png')
-    import os
-    save_path = os.path.join(os.getcwd(), f'roc_curve_{model_names[i]}_avg_auc_{mean_auc:.2f}(1).png')
-    plt.savefig(save_path)    
-    plt.close()
+        for j in range(labels.shape[1]):
+            fpr, tpr, thresholds = roc_curve(labels[:, j], preds[:, j])
+            plt.plot(fpr, tpr, label=f'Label {j} (AUC = {aucs[j]:.2f})')
 
-# print(f"Average AUC for {model1}: {np.mean(results[model1]['aucs']):.2f}")
-for model in models:
-    print(f"Average AUC for {model}: {np.mean(results[model]['aucs']):.2f}")
+        plt.plot([0, 1], [0, 1], 'k--')  # Diagonal line
+        plt.title(f'ROC Curves for model {model} using data {data}')
+        plt.xlabel('False Positive Rate')
+        plt.ylabel('True Positive Rate')
+        plt.legend(loc='lower right')
+        plt.grid()
+        # plt.savefig(f'roc_curve_{model_names[i]}_avg_auc_{mean_auc:.2f}(1).png')
+        import os
+        save_path = os.path.join(os.getcwd(), f'roc_curve_{model_names[i]}_avg_auc_{mean_auc:.2f}_using_data_{data}.png')
+        plt.savefig(save_path)    
+        plt.close()
+
+    # print(f"Average AUC for {model1}: {np.mean(results[model1]['aucs']):.2f}")
+    for model in models:
+        print(f"Average AUC for {model} using data {data}: {np.mean(results[model]['aucs']):.2f}")

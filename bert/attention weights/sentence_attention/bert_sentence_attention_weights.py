@@ -14,6 +14,60 @@ fine_tuned_model = f"./fine-tuned-{model_name.split('/')[-1]}"
 models = [fine_tuned_model]
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+import nltk
+nltk.download('punkt')
+from nltk.tokenize import sent_tokenize
+
+def split_into_sentences(text):
+    return sent_tokenize(text)
+
+def map_tokens_to_sentences(text, tokenizer):
+    sentences = split_into_sentences(text)
+    tokenized = tokenizer.encode_plus(
+        text,
+        return_offsets_mapping=True,
+        truncation=True,
+        max_length=512
+    )
+    tokens = tokenizer.convert_ids_to_tokens(tokenized['input_ids'])
+    offsets = tokenized['offset_mapping']
+    
+    token_sentence_map = []
+    current_sentence = 0
+    current_char = 0
+    for offset in offsets:
+        if offset[0] == 0 and current_char < len(sentences[current_sentence]):
+            # New sentence detected
+            current_sentence += 1
+            if current_sentence >= len(sentences):
+                current_sentence = len(sentences) - 1
+        token_sentence_map.append(current_sentence)
+        current_char = offset[1]
+    
+    return tokens, token_sentence_map, sentences
+def aggregate_attention_by_sentence(attention_weights, token_sentence_map, num_sentences):
+    sentence_attention = np.zeros(num_sentences)
+    token_counts = np.zeros(num_sentences)
+    
+    for i, sentence_id in enumerate(token_sentence_map):
+        sentence_attention[sentence_id] += attention_weights[i]
+        token_counts[sentence_id] += 1
+    
+    # Avoid division by zero
+    token_counts[token_counts == 0] = 1
+    sentence_attention /= token_counts
+    
+    return sentence_attention
+
+def visualize_sentence_attention(sentence_attention, sentences):
+    plt.figure(figsize=(12, 8))
+    sns.barplot(x=sentence_attention, y=sentences, palette='viridis')
+    plt.xlabel('Average Attention Weight')
+    plt.ylabel('Sentences')
+    plt.title('Sentence-Level Attention Weights')
+    plt.tight_layout()
+    plt.show()
+
 
 # Load model and tokenizer
 def load_model(model_name):
@@ -56,8 +110,23 @@ def create_dataset(texts, labels):
     return Dataset.from_dict({'text': texts, 'labels': labels})
 
 # Tokenization function
-def tokenize_function(examples):
-    return tokenizer(examples['text'], padding='max_length', truncation=True, max_length=512)
+# def tokenize_function(examples): #tokenize for token
+#     return tokenizer(examples['text'], padding='max_length', truncation=True, max_length=512)
+
+def tokenize_function(examples): #tokenize for sentence
+    tokens_list = []
+    sentence_maps = []
+    sentences_list = []
+    for text in examples['text']:
+        tokens, sentence_map, sentences = map_tokens_to_sentences(text, tokenizer)
+        tokens_list.append(tokens)
+        sentence_maps.append(sentence_map)
+        sentences_list.append(sentences)
+    return tokenizer(examples['text'], padding='max_length', truncation=True, max_length=512), {
+        'sentence_map': sentence_maps,
+        'sentences': sentences_list
+    }
+
 
 # Extract attention weights and logits from model predictions
 def extract_attention_weights(model, dataloader, device):
@@ -141,7 +210,7 @@ for model_path in models:
     attentions=attention_data
     # for layer_idx, layer_attentions in enumerate(attentions):
     #     print(f"Attention scores for layer {layer_idx}:")
-    #     print(layer_attentions)ㄙ
+    #     print(layer_attentions)
 
     # Optionally: Aggregate attention scores across heads and layers for each token
     # Example: Averaging attention across all heads in a specific layer
@@ -269,6 +338,12 @@ def get_token_word(token_id):
 # Example usage for visualizing attention weights
 for model_path in models:
     if results[model_path]['attentions']:
+        for i, text in enumerate(test_texts):
+            tokens, sentence_map, sentences = map_tokens_to_sentences(text, tokenizer)
+            attention_weights = results[model_path]['attentions'][i]  # Adjust indexing as needed
+            sentence_attention = aggregate_attention_by_sentence(attention_weights, sentence_map, len(sentences))
+            visualize_sentence_attention(sentence_attention, sentences)        
+            '''
         # Visualize attention weights for this model
         visualize_attention_weights(results[model_path]['attentions'], test_texts)
 
@@ -319,3 +394,4 @@ for model_path in models:
         #             print(f"Token '{word_i}' -> Token '{word_j}': {attention_value:.2f}%")                    
         # for token, attention in attention_percentages:
         #     print(f"Token: {token}, Attention: {attention:.2f}%")
+'''
